@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>LINE 教學對話圖產生器 PRO</title>
+  <title>LINE 教學對話圖產生器 PRO｜自訂每句時間版</title>
   <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
   <style>
     * { box-sizing: border-box; }
@@ -318,7 +318,7 @@
 <body>
   <div class="page">
     <div class="panel">
-      <h1>LINE 教學對話圖產生器 PRO</h1>
+      <h1>LINE 教學對話圖產生器 PRO｜自訂時間版</h1>
       <p class="hint">預設角色是小惠與小欣老師。可以改名、換頭像、換背景，也可以選擇長圖、IG 1:1、3:4 教學海報、9:16 手機截圖。</p>
 
       <h2>角色設定</h2>
@@ -357,17 +357,23 @@
         <option value="bw">黑白線稿</option>
       </select>
 
+      <label>開始時間（沒有逐句指定時使用）</label>
+      <input id="startTime" type="time" value="10:08" />
+
+      <label>每句自動間隔分鐘</label>
+      <input id="intervalMinutes" type="number" min="1" max="30" value="2" />
+
       <label>聊天室背景圖</label>
       <input id="bgUpload" type="file" accept="image/*" />
       <button class="light" onclick="resetBg()">恢復預設背景</button>
 
       <h2>對話內容</h2>
-      <p class="hint">格式請用：小惠：文字 或 小欣老師：文字。若你改了角色名稱，也請用新的名稱。</p>
-      <textarea id="script">小惠：老師，為什麼冰塊會浮在水面上？
-小欣老師：這跟密度有關。冰的密度比水小，所以會浮在水面上。
-小惠：所以不是因為冰比較輕，而是同樣體積下比較輕？
-小欣老師：沒錯！你抓到重點了。密度就是比較「同樣體積」時，誰含有比較多物質。
-小惠：原來冰浮起來，其實是在告訴我們密度的概念！</textarea>
+      <p class="hint">可用格式：小惠：文字／小欣老師：文字；也可逐句指定時間：小惠｜07:30：文字、小欣老師｜07:45：文字。</p>
+      <textarea id="script">小惠｜07:30：老師，為什麼冰塊會浮在水面上？
+小欣老師｜07:31：這跟密度有關。冰的密度比水小，所以會浮在水面上。
+小惠｜07:33：所以不是因為冰比較輕，而是同樣體積下比較輕？
+小欣老師｜07:35：沒錯！你抓到重點了。密度就是比較「同樣體積」時，誰含有比較多物質。
+小惠｜07:38：原來冰浮起來，其實是在告訴我們密度的概念！</textarea>
 
       <button onclick="renderChat()">更新畫面</button>
       <button class="secondary" onclick="downloadPNG()">匯出 PNG</button>
@@ -377,7 +383,7 @@
       <div id="capture">
         <div class="phone" id="phone">
           <div class="status">
-            <span>10:08</span>
+            <span id="statusTime">10:08</span>
             <span>●●● Wi‑Fi 🔋</span>
           </div>
 
@@ -437,10 +443,10 @@
     });
   });
 
-  document.getElementById("ratio").addEventListener("change", renderChat);
-  document.getElementById("styleMode").addEventListener("change", renderChat);
-  document.getElementById("leftName").addEventListener("input", renderChat);
-  document.getElementById("rightName").addEventListener("input", renderChat);
+  ["ratio", "styleMode", "leftName", "rightName", "startTime", "intervalMinutes", "script"].forEach(id => {
+    document.getElementById(id).addEventListener("input", renderChat);
+    document.getElementById(id).addEventListener("change", renderChat);
+  });
 
   function resetBg() {
     bgImage = "";
@@ -451,12 +457,9 @@
     const leftName = document.getElementById("leftName").value.trim() || "小惠";
     const rightName = document.getElementById("rightName").value.trim() || "小欣老師";
     const text = document.getElementById("script").value.trim();
-    const lines = text.split(/\n+/).map(x => x.trim()).filter(Boolean);
+    const lines = text.split(/
++/).map(x => x.trim()).filter(Boolean);
 
-    // 重要修正：
-    // 即使使用者把左邊角色改名為「小花」，
-    // 對話文字仍然寫「小惠：」時，也會判定為左邊角色。
-    // 這樣就不會發生「小惠的訊息跑到右邊」的問題。
     const leftAliases = uniqueNames([leftName, "小惠", "學生", "同學", "A"]);
     const rightAliases = uniqueNames([rightName, "小欣老師", "老師", "B"]);
 
@@ -468,18 +471,19 @@
       if (parsed) {
         result.push(parsed);
       } else {
-        // 沒有角色標籤的續行，接在上一句同一側；
-        // 如果是第一句沒有標籤，預設放左邊。
         const side = result.length ? result[result.length - 1].side : "left";
         if (result.length) {
           result[result.length - 1].text += "\n" + line;
         } else {
-          result.push({ side, text: line });
+          result.push({ side, text: line, time: "" });
         }
       }
     }
 
-    return result;
+    return result.map((msg, index) => ({
+      ...msg,
+      time: normalizeTime(msg.time) || autoTimeForIndex(index)
+    }));
   }
 
   function uniqueNames(arr) {
@@ -487,35 +491,78 @@
   }
 
   function parseLineByAliases(line, leftAliases, rightAliases) {
-    const clean = line.replace("：", ":").trim();
+    const clean = line.replaceAll("：", ":").replaceAll("｜", "|").trim();
 
     for (const name of leftAliases) {
-      const prefix = name + ":";
-      if (clean.startsWith(prefix)) {
-        return {
-          side: "left",
-          text: clean.slice(prefix.length).trim()
-        };
+      const directPrefix = name + ":";
+      if (clean.startsWith(directPrefix)) {
+        return { side: "left", text: clean.slice(directPrefix.length).trim(), time: "" };
+      }
+
+      const timedPrefix = name + "|";
+      if (clean.startsWith(timedPrefix)) {
+        const rest = clean.slice(timedPrefix.length).trim();
+        const colonIndex = rest.indexOf(":");
+        if (colonIndex !== -1) {
+          return {
+            side: "left",
+            time: rest.slice(0, colonIndex).trim(),
+            text: rest.slice(colonIndex + 1).trim()
+          };
+        }
       }
     }
 
     for (const name of rightAliases) {
-      const prefix = name + ":";
-      if (clean.startsWith(prefix)) {
-        return {
-          side: "right",
-          text: clean.slice(prefix.length).trim()
-        };
+      const directPrefix = name + ":";
+      if (clean.startsWith(directPrefix)) {
+        return { side: "right", text: clean.slice(directPrefix.length).trim(), time: "" };
+      }
+
+      const timedPrefix = name + "|";
+      if (clean.startsWith(timedPrefix)) {
+        const rest = clean.slice(timedPrefix.length).trim();
+        const colonIndex = rest.indexOf(":");
+        if (colonIndex !== -1) {
+          return {
+            side: "right",
+            time: rest.slice(0, colonIndex).trim(),
+            text: rest.slice(colonIndex + 1).trim()
+          };
+        }
       }
     }
 
     return null;
   }
 
-  function timeForIndex(i) {
-    const baseMin = 8;
-    const minute = baseMin + Math.floor(i * 1.45);
-    return `10:${String(minute).padStart(2, "0")}`;
+  function normalizeTime(value) {
+    if (!value) return "";
+    const text = String(value).trim();
+    const match = text.match(/^(\d{1,2})[:：](\d{1,2})$/);
+    if (!match) return "";
+
+    let hour = Number(match[1]);
+    let minute = Number(match[2]);
+
+    if (Number.isNaN(hour) || Number.isNaN(minute)) return "";
+    if (hour < 0 || hour > 23 || minute < 0 || minute > 59) return "";
+
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
+  }
+
+  function autoTimeForIndex(i) {
+    const start = document.getElementById("startTime").value || "10:08";
+    const interval = Number(document.getElementById("intervalMinutes").value) || 2;
+
+    let [hour, minute] = start.split(":").map(Number);
+    minute += i * interval;
+
+    hour += Math.floor(minute / 60);
+    minute = minute % 60;
+    hour = hour % 24;
+
+    return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
   }
 
   function renderChat() {
@@ -527,6 +574,7 @@
     const messagesEl = document.getElementById("messages");
 
     document.getElementById("roomTitle").textContent = `${leftName} × ${rightName}`;
+    document.getElementById("statusTime").textContent = document.getElementById("startTime").value || "10:08";
 
     wrap.classList.remove("square", "poster", "long", "bw");
     if (ratio === "square") wrap.classList.add("square");
@@ -536,10 +584,9 @@
 
     messagesEl.innerHTML = "";
 
-    parseMessages().forEach((msg, i) => {
+    parseMessages().forEach((msg) => {
       const name = msg.side === "left" ? leftName : rightName;
       const avatar = msg.side === "left" ? leftAvatar : rightAvatar;
-      const time = timeForIndex(i);
       const row = document.createElement("div");
       row.className = `msg ${msg.side}`;
 
@@ -549,7 +596,7 @@
           <div class="bubble-block">
             <div class="name">${escapeHtml(name)}</div>
             <div class="bubble">${escapeHtml(msg.text)}</div>
-            <div class="meta">${time}</div>
+            <div class="meta">${msg.time}</div>
           </div>
         `;
       } else {
@@ -557,7 +604,7 @@
           <div class="bubble-block">
             <div class="name">${escapeHtml(name)}</div>
             <div class="bubble">${escapeHtml(msg.text)}</div>
-            <div class="meta">已讀 ${time}</div>
+            <div class="meta">已讀 ${msg.time}</div>
           </div>
           <img class="msg-avatar" src="${avatar}" />
         `;
