@@ -357,18 +357,22 @@
         <option value="bw">黑白線稿</option>
       </select>
 
-      <label>開始時間（沒有逐句指定時使用）</label>
-      <input id="startTime" type="time" value="10:08" />
+      <details style="margin-top:12px;">
+        <summary style="font-weight:800; cursor:pointer;">進階：沒有逐句時間時才使用</summary>
 
-      <label>每句自動間隔分鐘</label>
-      <input id="intervalMinutes" type="number" min="1" max="30" value="2" />
+        <label>開始時間</label>
+        <input id="startTime" type="time" value="10:08" />
+
+        <label>每句自動間隔分鐘</label>
+        <input id="intervalMinutes" type="number" min="1" max="30" value="2" />
+      </details>
 
       <label>聊天室背景圖</label>
       <input id="bgUpload" type="file" accept="image/*" />
       <button class="light" onclick="resetBg()">恢復預設背景</button>
 
       <h2>對話內容</h2>
-      <p class="hint">可用格式：小惠：文字／小欣老師：文字；也可逐句指定時間：小惠｜07:30：文字、小欣老師｜07:45：文字。</p>
+      <p class="hint">可用格式：小惠：文字／小欣老師：文字；也可逐句指定時間：小惠｜07:30：文字。可接受空格，例如：小惠 | 07:30：文字。</p>
       <textarea id="script">小惠｜07:30：老師，為什麼冰塊會浮在水面上？
 小欣老師｜07:31：這跟密度有關。冰的密度比水小，所以會浮在水面上。
 小惠｜07:33：所以不是因為冰比較輕，而是同樣體積下比較輕？
@@ -491,49 +495,59 @@
   }
 
   function parseLineByAliases(line, leftAliases, rightAliases) {
-    const clean = line.replaceAll("：", ":").replaceAll("｜", "|").trim();
+    const clean = String(line).trim();
 
-    for (const name of leftAliases) {
-      const directPrefix = name + ":";
-      if (clean.startsWith(directPrefix)) {
-        return { side: "left", text: clean.slice(directPrefix.length).trim(), time: "" };
+    const leftParsed = parseSideLine(clean, leftAliases, "left");
+    if (leftParsed) return leftParsed;
+
+    const rightParsed = parseSideLine(clean, rightAliases, "right");
+    if (rightParsed) return rightParsed;
+
+    return null;
+  }
+
+  function parseSideLine(line, aliases, side) {
+    for (const name of aliases) {
+      const escapedName = escapeRegExp(name);
+
+      // 支援：
+      // 小惠：文字
+      // 小惠:文字
+      // 小惠｜07:30：文字
+      // 小惠 | 07:30 : 文字
+      // 小惠 07:30 文字
+      const timedPattern = new RegExp(
+        "^" + escapedName + "\s*(?:[｜|])?\s*(\d{1,2}[:：]\d{1,2})\s*[:：]\s*(.+)$"
+      );
+
+      const directPattern = new RegExp(
+        "^" + escapedName + "\s*[:：]\s*(.+)$"
+      );
+
+      let timedMatch = line.match(timedPattern);
+      if (timedMatch) {
+        return {
+          side,
+          time: timedMatch[1].trim(),
+          text: timedMatch[2].trim()
+        };
       }
 
-      const timedPrefix = name + "|";
-      if (clean.startsWith(timedPrefix)) {
-        const rest = clean.slice(timedPrefix.length).trim();
-        const colonIndex = rest.indexOf(":");
-        if (colonIndex !== -1) {
-          return {
-            side: "left",
-            time: rest.slice(0, colonIndex).trim(),
-            text: rest.slice(colonIndex + 1).trim()
-          };
-        }
-      }
-    }
-
-    for (const name of rightAliases) {
-      const directPrefix = name + ":";
-      if (clean.startsWith(directPrefix)) {
-        return { side: "right", text: clean.slice(directPrefix.length).trim(), time: "" };
-      }
-
-      const timedPrefix = name + "|";
-      if (clean.startsWith(timedPrefix)) {
-        const rest = clean.slice(timedPrefix.length).trim();
-        const colonIndex = rest.indexOf(":");
-        if (colonIndex !== -1) {
-          return {
-            side: "right",
-            time: rest.slice(0, colonIndex).trim(),
-            text: rest.slice(colonIndex + 1).trim()
-          };
-        }
+      let directMatch = line.match(directPattern);
+      if (directMatch) {
+        return {
+          side,
+          time: "",
+          text: directMatch[1].trim()
+        };
       }
     }
 
     return null;
+  }
+
+  function escapeRegExp(str) {
+    return String(str).replace(/[.*+?^${}()|[\]\]/g, "\$&");
   }
 
   function normalizeTime(value) {
@@ -574,7 +588,6 @@
     const messagesEl = document.getElementById("messages");
 
     document.getElementById("roomTitle").textContent = `${leftName} × ${rightName}`;
-    document.getElementById("statusTime").textContent = document.getElementById("startTime").value || "10:08";
 
     wrap.classList.remove("square", "poster", "long", "bw");
     if (ratio === "square") wrap.classList.add("square");
@@ -584,7 +597,11 @@
 
     messagesEl.innerHTML = "";
 
-    parseMessages().forEach((msg) => {
+    const parsedMessages = parseMessages();
+    document.getElementById("statusTime").textContent =
+      parsedMessages.length ? parsedMessages[0].time : (document.getElementById("startTime").value || "10:08");
+
+    parsedMessages.forEach((msg) => {
       const name = msg.side === "left" ? leftName : rightName;
       const avatar = msg.side === "left" ? leftAvatar : rightAvatar;
       const row = document.createElement("div");
