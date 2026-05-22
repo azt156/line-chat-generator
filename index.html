@@ -405,7 +405,6 @@
 <script>
   let leftAvatar = "assets/xiaohui.png";
   let rightAvatar = "assets/teacher.png";
-  let bgImage = "";
 
   function fileToURL(input, callback) {
     const file = input.files && input.files[0];
@@ -431,18 +430,17 @@
 
   document.getElementById("bgUpload").addEventListener("change", function () {
     fileToURL(this, (url) => {
-      bgImage = url;
       document.getElementById("chatArea").style.backgroundImage = `url(${url})`;
     });
   });
 
-  ["ratio", "styleMode", "leftName", "rightName", "script"].forEach(id => {
-    document.getElementById(id).addEventListener("input", renderChat);
-    document.getElementById(id).addEventListener("change", renderChat);
+  ["ratio", "styleMode", "leftName", "rightName", "script"].forEach((id) => {
+    const el = document.getElementById(id);
+    el.addEventListener("input", renderChat);
+    el.addEventListener("change", renderChat);
   });
 
   function resetBg() {
-    bgImage = "";
     document.getElementById("chatArea").style.backgroundImage = "";
   }
 
@@ -450,106 +448,83 @@
     const leftName = document.getElementById("leftName").value.trim() || "小惠";
     const rightName = document.getElementById("rightName").value.trim() || "小欣老師";
     const text = document.getElementById("script").value.trim();
-    const lines = text.split(/
-+/).map(x => x.trim()).filter(Boolean);
 
     const leftAliases = uniqueNames([leftName, "小惠", "學生", "同學", "A"]);
     const rightAliases = uniqueNames([rightName, "小欣老師", "老師", "B"]);
 
-    let result = [];
+    const lines = text.split(/\n+/).map((line) => line.trim()).filter(Boolean);
+    const result = [];
 
     for (const line of lines) {
-      const parsed = parseLineByAliases(line, leftAliases, rightAliases);
+      const parsed = parseOneLine(line, leftAliases, rightAliases);
 
       if (parsed) {
         result.push(parsed);
+      } else if (result.length > 0) {
+        result[result.length - 1].text += "\n" + line;
       } else {
-        const side = result.length ? result[result.length - 1].side : "left";
-        if (result.length) {
-          result[result.length - 1].text += "\n" + line;
-        } else {
-          result.push({ side, text: line, time: "" });
+        result.push({ side: "left", text: line, time: "" });
+      }
+    }
+
+    return result.map((msg, index) => {
+      return {
+        ...msg,
+        time: normalizeTime(msg.time) || autoTimeForIndex(index)
+      };
+    });
+  }
+
+  function uniqueNames(names) {
+    return [...new Set(names.map((name) => String(name).trim()).filter(Boolean))];
+  }
+
+  function parseOneLine(line, leftAliases, rightAliases) {
+    const clean = line.trim();
+
+    const left = tryParseWithAliases(clean, leftAliases, "left");
+    if (left) return left;
+
+    const right = tryParseWithAliases(clean, rightAliases, "right");
+    if (right) return right;
+
+    return null;
+  }
+
+  function tryParseWithAliases(line, aliases, side) {
+    for (const alias of aliases) {
+      if (line.startsWith(alias)) {
+        let rest = line.slice(alias.length).trim();
+
+        if (rest.startsWith("|") || rest.startsWith("｜")) {
+          rest = rest.slice(1).trim();
+
+          const timeMatch = rest.match(/^(\d{1,2})[:：](\d{1,2})/);
+          if (!timeMatch) return null;
+
+          const time = `${timeMatch[1]}:${timeMatch[2]}`;
+          rest = rest.slice(timeMatch[0].length).trim();
+
+          if (rest.startsWith(":") || rest.startsWith("：")) {
+            rest = rest.slice(1).trim();
+          }
+
+          return { side, time, text: rest };
         }
-      }
-    }
 
-    return result.map((msg, index) => ({
-      ...msg,
-      time: normalizeTime(msg.time) || autoTimeForIndex(index)
-    }));
-  }
-
-  function uniqueNames(arr) {
-    return [...new Set(arr.map(x => String(x).trim()).filter(Boolean))];
-  }
-
-  function parseLineByAliases(line, leftAliases, rightAliases) {
-    // 支援以下格式：
-    // 小惠：文字
-    // 小惠｜07:30：文字
-    // 小惠 | 07:30：文字
-    // 小惠|07:30:文字
-    const clean = line.replaceAll("：", ":").replaceAll("｜", "|").trim();
-
-    for (const name of leftAliases) {
-      const escapedName = escapeRegExp(name);
-      const timedPattern = new RegExp("^" + escapedName + "\s*\|\s*(\d{1,2}[:：]\d{1,2})\s*[:：]\s*(.*)$");
-      const directPattern = new RegExp("^" + escapedName + "\s*[:：]\s*(.*)$");
-
-      let timedMatch = clean.match(timedPattern);
-      if (timedMatch) {
-        return {
-          side: "left",
-          time: timedMatch[1].trim(),
-          text: timedMatch[2].trim()
-        };
-      }
-
-      let directMatch = clean.match(directPattern);
-      if (directMatch) {
-        return {
-          side: "left",
-          text: directMatch[1].trim(),
-          time: ""
-        };
-      }
-    }
-
-    for (const name of rightAliases) {
-      const escapedName = escapeRegExp(name);
-      const timedPattern = new RegExp("^" + escapedName + "\s*\|\s*(\d{1,2}[:：]\d{1,2})\s*[:：]\s*(.*)$");
-      const directPattern = new RegExp("^" + escapedName + "\s*[:：]\s*(.*)$");
-
-      let timedMatch = clean.match(timedPattern);
-      if (timedMatch) {
-        return {
-          side: "right",
-          time: timedMatch[1].trim(),
-          text: timedMatch[2].trim()
-        };
-      }
-
-      let directMatch = clean.match(directPattern);
-      if (directMatch) {
-        return {
-          side: "right",
-          text: directMatch[1].trim(),
-          time: ""
-        };
+        if (rest.startsWith(":") || rest.startsWith("：")) {
+          rest = rest.slice(1).trim();
+          return { side, time: "", text: rest };
+        }
       }
     }
 
     return null;
   }
 
-  function escapeRegExp(text) {
-    return String(text).replace(/[.*+?^${}()|[\]\]/g, "\$&");
-  }
-
   function normalizeTime(value) {
     if (!value) return "";
-    const text = String(value).trim();
-    const match = text.match(/^(\d{1,2})[:：](\d{1,2})$/);
+    const match = String(value).trim().match(/^(\d{1,2})[:：](\d{1,2})$/);
     if (!match) return "";
 
     let hour = Number(match[1]);
@@ -561,12 +536,13 @@
     return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
   }
 
-  function autoTimeForIndex(i) {
-    const defaultStart = "10:08";
-    const defaultInterval = 2;
+  function autoTimeForIndex(index) {
+    const startHour = 10;
+    const startMinute = 8;
+    const interval = 2;
 
-    let [hour, minute] = defaultStart.split(":").map(Number);
-    minute += i * defaultInterval;
+    let hour = startHour;
+    let minute = startMinute + index * interval;
 
     hour += Math.floor(minute / 60);
     minute = minute % 60;
@@ -582,9 +558,9 @@
     const styleMode = document.getElementById("styleMode").value;
     const wrap = document.getElementById("exportAreaWrap");
     const messagesEl = document.getElementById("messages");
+    const parsedMessages = parseMessages();
 
     document.getElementById("roomTitle").textContent = `${leftName} × ${rightName}`;
-    const parsedMessages = parseMessages();
     document.getElementById("statusTime").textContent = parsedMessages[0]?.time || "10:08";
 
     wrap.classList.remove("square", "poster", "long", "bw");
@@ -607,7 +583,7 @@
           <div class="bubble-block">
             <div class="name">${escapeHtml(name)}</div>
             <div class="bubble">${escapeHtml(msg.text)}</div>
-            <div class="meta">${msg.time}</div>
+            <div class="meta">${escapeHtml(msg.time)}</div>
           </div>
         `;
       } else {
@@ -615,23 +591,24 @@
           <div class="bubble-block">
             <div class="name">${escapeHtml(name)}</div>
             <div class="bubble">${escapeHtml(msg.text)}</div>
-            <div class="meta">已讀 ${msg.time}</div>
+            <div class="meta">已讀 ${escapeHtml(msg.time)}</div>
           </div>
           <img class="msg-avatar" src="${avatar}" />
         `;
       }
+
       messagesEl.appendChild(row);
     });
   }
 
-  function escapeHtml(str) {
-    return str.replace(/[&<>"']/g, (m) => ({
+  function escapeHtml(value) {
+    return String(value).replace(/[&<>"']/g, (char) => ({
       "&": "&amp;",
       "<": "&lt;",
       ">": "&gt;",
       '"': "&quot;",
       "'": "&#039;"
-    }[m]));
+    }[char]));
   }
 
   async function downloadPNG() {
@@ -641,6 +618,7 @@
       useCORS: true,
       backgroundColor: null
     });
+
     const link = document.createElement("a");
     link.download = "line-chat.png";
     link.href = canvas.toDataURL("image/png");
